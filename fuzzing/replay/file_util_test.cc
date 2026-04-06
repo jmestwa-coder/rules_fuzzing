@@ -16,8 +16,11 @@
 
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
+#include <cerrno>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <string>
 #include <vector>
@@ -111,6 +114,31 @@ TEST(YieldFilesTest, YieldsHiddenFilesAndDirs) {
       YieldFiles(root_dir, CollectPathsCallback(&collected_paths));
   EXPECT_TRUE(status.ok());
   EXPECT_THAT(collected_paths, testing::SizeIs(2));
+}
+
+TEST(YieldFilesTest, DoesNotRecurseThroughSymlinkLoop) {
+  const std::string root_dir =
+      absl::StrCat(getenv("TEST_TMPDIR"), "/symlink-loop-root");
+  ASSERT_EQ(mkdir(root_dir.c_str(), 0755), 0);
+  const std::string dir_a = absl::StrCat(root_dir, "/dirA");
+  ASSERT_EQ(mkdir(dir_a.c_str(), 0755), 0);
+  const std::string dir_b = absl::StrCat(root_dir, "/dirB");
+  ASSERT_EQ(mkdir(dir_b.c_str(), 0755), 0);
+
+  const std::string link_to_b = absl::StrCat(dir_a, "/toB");
+  if (symlink(dir_b.c_str(), link_to_b.c_str()) != 0) {
+    GTEST_SKIP() << "symlink unsupported in this environment: "
+                 << std::strerror(errno);
+  }
+  const std::string link_to_a = absl::StrCat(dir_b, "/toA");
+  ASSERT_EQ(symlink(dir_a.c_str(), link_to_a.c_str()), 0);
+
+  std::vector<std::string> collected_paths;
+  const absl::Status status =
+      YieldFiles(root_dir, CollectPathsCallback(&collected_paths));
+  EXPECT_TRUE(status.ok());
+  EXPECT_GT(collected_paths.size(), 0);
+  EXPECT_LE(collected_paths.size(), 6);
 }
 
 }  // namespace
